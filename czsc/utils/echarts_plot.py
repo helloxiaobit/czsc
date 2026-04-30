@@ -3,12 +3,15 @@
 
 """
 # ruff: noqa: E101  # JS 代码嵌入 Python 字符串，mixed spaces/tabs 是误报
+from __future__ import annotations
 
-from typing import TYPE_CHECKING, Optional
+from collections.abc import Mapping
+from datetime import datetime
+from typing import TYPE_CHECKING, Any, Optional
 
 import numpy as np
 from pyecharts import options as opts
-from pyecharts.charts import Bar, Grid, Kline, Line, Scatter
+from pyecharts.charts import Bar, EffectScatter, Grid, Kline, Line, Scatter
 from pyecharts.commons.utils import JsCode
 
 from czsc.py.enum import Operate
@@ -424,6 +427,677 @@ def kline_pro(
         linestyle_opts=opts.LineStyleOpts(opacity=0.8, width=1.0, color="#39afe6"),
     )
 
+    chart_macd = chart_macd.overlap(line)
+
+    grid0_opts = opts.GridOpts(pos_left="0%", pos_right="1%", pos_top="12%", height="58%")
+    grid1_opts = opts.GridOpts(pos_left="0%", pos_right="1%", pos_top="74%", height="8%")
+    grid2_opts = opts.GridOpts(pos_left="0%", pos_right="1%", pos_top="86%", height="10%")
+
+    grid_chart = Grid(init_opts)
+    grid_chart.add(chart_k, grid_opts=grid0_opts)
+    grid_chart.add(chart_vol, grid_opts=grid1_opts)
+    grid_chart.add(chart_macd, grid_opts=grid2_opts)
+    return grid_chart
+
+
+def _safe_get(row: Any, key: str, default: Any = None) -> Any:
+    if isinstance(row, Mapping):
+        return row.get(key, default)
+    return getattr(row, key, default)
+
+
+def _parse_dt(value: Any) -> datetime | None:
+    if value is None:
+        return None
+    if isinstance(value, datetime):
+        return value.replace(tzinfo=None)
+    if isinstance(value, str):
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).replace(tzinfo=None)
+        except Exception:
+            pass
+        for fmt in ["%Y-%m-%d %H:%M:%S", "%Y-%m-%d", "%Y/%m/%d %H:%M:%S", "%Y/%m/%d"]:
+            try:
+                return datetime.strptime(value, fmt)
+            except Exception:
+                continue
+        return None
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(value)
+        except Exception:
+            return None
+    return None
+
+
+def _dt_display(dt: Any) -> str:
+    parsed = _parse_dt(dt)
+    if parsed is None:
+        return str(dt)
+    return parsed.strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _to_float(value: Any, default: float = 0.0) -> float:
+    if value is None:
+        return default
+    try:
+        return float(value)
+    except Exception:
+        return default
+
+
+def _resolve_axis_index(
+    dt_index: list[datetime],
+    dt_label_index: list[str],
+    *,
+    explicit_index: int | None,
+    dt_value: Any = None,
+) -> int | None:
+    if dt_index:
+        if explicit_index is not None:
+            try:
+                idx = int(explicit_index)
+                if idx < 0:
+                    return None
+                if idx >= len(dt_index):
+                    return len(dt_index) - 1
+                return idx
+            except Exception:
+                pass
+
+    if dt_value is None:
+        return None
+
+    parsed = _parse_dt(dt_value)
+    if parsed is None or not dt_index:
+        return None
+
+    # 精确匹配
+    for i, item in enumerate(dt_index):
+        if item == parsed:
+            return i
+
+    # 最近点匹配
+    if len(dt_index) == 1:
+        return 0
+    diffs = [abs((x - parsed).total_seconds()) for x in dt_index]
+    min_idx = int(diffs.index(min(diffs)))
+    if 0 <= min_idx < len(dt_label_index):
+        return min_idx
+    return None
+
+
+def _coerce_kline(payload: Mapping[str, Any]) -> tuple[list[datetime], list[str], list[dict[str, float]]]:
+    raw_rows = payload.get("kline", [])
+    parsed_rows = []
+    for row in raw_rows:
+        dt_value = _safe_get(row, "dt")
+        dt_obj = _parse_dt(dt_value)
+        if dt_obj is None:
+            continue
+        parsed_rows.append(
+            {
+                "dt": dt_obj,
+                "dt_display": _dt_display(dt_obj),
+                "open": _to_float(_safe_get(row, "open")),
+                "close": _to_float(_safe_get(row, "close")),
+                "high": _to_float(_safe_get(row, "high")),
+                "low": _to_float(_safe_get(row, "low")),
+                "vol": _to_float(_safe_get(row, "vol", 0.0)),
+            }
+        )
+
+    if not parsed_rows:
+        return [], [], []
+    parsed_rows = sorted(parsed_rows, key=lambda x: x["dt"])
+    dt_index = [x["dt"] for x in parsed_rows]
+    dt_labels = [x["dt_display"] for x in parsed_rows]
+    base_kline = [{"open": x["open"], "close": x["close"], "low": x["low"], "high": x["high"], "vol": x["vol"]} for x in parsed_rows]
+    return dt_index, dt_labels, base_kline
+
+
+def _level_palette(idx: int) -> dict[str, Any]:
+    palette = [
+        {
+            "bi_color": "#BA75E1",
+            "xd_color": "#26A65B",
+            "zone_color": "rgba(186,117,225,0.14)",
+            "zone_border": "rgba(186,117,225,0.45)",
+            "div_color": "#F44336",
+            "bi_width": 2.0,
+            "xd_width": 2.8,
+            "div_width": 3.5,
+        },
+        {
+            "bi_color": "#4A90E2",
+            "xd_color": "#F0A500",
+            "zone_color": "rgba(255,165,0,0.14)",
+            "zone_border": "rgba(255,165,0,0.55)",
+            "div_color": "#FF5722",
+            "bi_width": 2.4,
+            "xd_width": 3.0,
+            "div_width": 3.8,
+        },
+        {
+            "bi_color": "#777777",
+            "xd_color": "#9B59B6",
+            "zone_color": "rgba(128,128,128,0.12)",
+            "zone_border": "rgba(128,128,128,0.5)",
+            "div_color": "#9C27B0",
+            "bi_width": 3.0,
+            "xd_width": 3.2,
+            "div_width": 4.0,
+        },
+    ]
+    return palette[min(idx, len(palette) - 1)]
+
+
+def _ensure_series_name(name: Any) -> str:
+    return str(name) if name is not None else "series"
+
+
+def kline_recursive(
+    payload: Mapping[str, Any],
+    title: str = "CZSC递归多级别分析",
+    width: str = "1400px",
+    height: str = "760px",
+    *,
+    show_levels: list[str] | None = None,
+    max_levels: int | None = None,
+    show_bi: bool = True,
+    show_xd: bool = True,
+    show_zones: bool = True,
+    show_trend_types: bool = True,
+    show_signals: bool = True,
+    show_resonance: bool = True,
+    show_divergence: bool = True,
+    show_series_legend: bool = True,
+) -> Grid:
+    """基于递归 payload 的多级别叠加绘制
+
+    :param payload: build_recursive_chart_payload 输出的统一 payload
+    :param title: 图表标题
+    :param width: 主图宽度
+    :param height: 主图高度
+    :param show_levels: 需要展示的级别 id，不传即按 payload 顺序展示
+    :param max_levels: 最大展示级别数量
+    :param show_bi: 是否绘制笔
+    :param show_xd: 是否绘制线段
+    :param show_zones: 是否绘制中枢
+    :param show_trend_types: 是否绘制走势类型标签
+    :param show_signals: 是否绘制基础买卖点
+    :param show_resonance: 是否绘制共振信号
+    :param show_divergence: 是否强化背驰笔/线段
+    :param show_series_legend: 是否展示图例
+    :return: Grid
+    """
+    if not isinstance(payload, Mapping):
+        raise TypeError("payload must be a mapping from recursive chart payload")
+
+    dt_index, xaxis_labels, rows = _coerce_kline(payload)
+    init_opts = opts.InitOpts(
+        bg_color="#1f212d", width=width, height=height, animation_opts=opts.AnimationOpts(False)
+    )
+    title_opts = opts.TitleOpts(
+        title=title,
+        pos_top="1%",
+        title_textstyle_opts=opts.TextStyleOpts(color="#F9293E", font_size=20),
+    )
+
+    label_show_opts = opts.LabelOpts(is_show=True)
+    label_not_show_opts = opts.LabelOpts(is_show=False)
+    legend_not_show_opts = opts.LegendOpts(is_show=False)
+    red_item_style = opts.ItemStyleOpts(color="#F9293E")
+    green_item_style = opts.ItemStyleOpts(color="#00aa3b")
+    k_style_opts = opts.ItemStyleOpts(
+        color="#F9293E", color0="#00aa3b", border_color="#F9293E", border_color0="#00aa3b", opacity=0.9
+    )
+
+    legend_opts = opts.LegendOpts(
+        is_show=show_series_legend,
+        pos_top="1%",
+        pos_left="30%",
+        item_width=14,
+        item_height=8,
+        textstyle_opts=opts.TextStyleOpts(font_size=12, color="#0e99e2"),
+    )
+    brush_opts = opts.BrushOpts(
+        tool_box=["rect", "polygon", "keep", "clear"],
+        x_axis_index="all",
+        brush_link="all",
+        out_of_brush={"colorAlpha": 0.1},
+        brush_type="lineX",
+    )
+    axis_pointer_opts = opts.AxisPointerOpts(is_show=True, link=[{"xAxisIndex": "all"}])
+
+    dz_inside = opts.DataZoomOpts(False, "inside", xaxis_index=[0, 1, 2], range_start=80, range_end=100)
+    dz_slider = opts.DataZoomOpts(
+        True, "slider", xaxis_index=[0, 1, 2], pos_top="96%", pos_bottom="0%", range_start=80, range_end=100
+    )
+
+    yaxis_opts = opts.AxisOpts(
+        is_scale=True,
+        min_="dataMin",
+        max_="dataMax",
+        splitline_opts=opts.SplitLineOpts(is_show=False),
+        axislabel_opts=opts.LabelOpts(color="#c7c7c7", font_size=8, position="inside"),
+    )
+    grid0_xaxis_opts = opts.AxisOpts(
+        type_="category",
+        grid_index=0,
+        axislabel_opts=label_not_show_opts,
+        split_number=20,
+        min_="dataMin",
+        max_="dataMax",
+        is_scale=True,
+        boundary_gap=False,
+        splitline_opts=opts.SplitLineOpts(is_show=False),
+        axisline_opts=opts.AxisLineOpts(is_on_zero=False),
+    )
+
+    tool_tip_opts = opts.TooltipOpts(
+        trigger="axis",
+        axis_pointer_type="cross",
+        background_color="rgba(245, 245, 245, 0.8)",
+        border_width=1,
+        border_color="#ccc",
+        position=JsCode(
+            """
+                    function (pos, params, el, elRect, size) {
+                        var obj = {top: 10};
+                        obj[['left', 'right'][+(pos[0] < size.viewSize[0] / 2)]] = 30;
+                        return obj;
+                    }
+                    """
+        ),
+        textstyle_opts=opts.TextStyleOpts(color="#000"),
+    )
+
+    # 基础K线
+    if not xaxis_labels:
+        xaxis_labels = []
+        rows = []
+        close = np.array([], dtype=np.double)
+    else:
+        close = np.array([x["close"] for x in rows], dtype=np.double)
+
+    k_data = [opts.CandleStickItem(name=i, value=[x["open"], x["close"], x["low"], x["high"]]) for i, x in enumerate(rows)]
+    vol = [opts.BarItem(name=i, value=_to_float(x["vol"]), itemstyle_opts=red_item_style, label_opts=label_not_show_opts) for i, x in enumerate(rows)]
+
+    chart_k = Kline().add_xaxis(xaxis_data=xaxis_labels).add_yaxis(series_name="K线", y_axis=k_data, itemstyle_opts=k_style_opts)
+    diff, dea, macd = MACD(close) if len(close) else ([], [], [])
+    macd_bar = [
+        opts.BarItem(name=i, value=round(v, 4), itemstyle_opts=red_item_style if v > 0 else green_item_style, label_opts=label_not_show_opts)
+        for i, v in enumerate(macd.tolist() if hasattr(macd, "tolist") else macd)
+    ]
+    diff = diff.round(4) if hasattr(diff, "round") else []
+    dea = dea.round(4) if hasattr(dea, "round") else []
+    close_for_ma = [x["close"] for x in rows] if rows else []
+
+    chart_k.set_global_opts(
+        legend_opts=legend_opts,
+        datazoom_opts=[dz_inside, dz_slider],
+        yaxis_opts=yaxis_opts,
+        tooltip_opts=tool_tip_opts,
+        axispointer_opts=axis_pointer_opts,
+        brush_opts=brush_opts,
+        title_opts=title_opts,
+        xaxis_opts=grid0_xaxis_opts,
+    )
+
+    # MA
+    if close_for_ma:
+        chart_ma = Line()
+        chart_ma.add_xaxis(xaxis_data=xaxis_labels)
+        for t in [5, 13, 21]:
+            ma = SMA(close, timeperiod=t)
+            chart_ma.add_yaxis(
+                series_name=f"MA{t}",
+                y_axis=ma,
+                is_smooth=True,
+                symbol_size=0,
+                label_opts=label_not_show_opts,
+                linestyle_opts=opts.LineStyleOpts(opacity=0.8, width=1),
+            )
+        chart_ma.set_global_opts(xaxis_opts=grid0_xaxis_opts, legend_opts=legend_not_show_opts)
+        chart_k = chart_k.overlap(chart_ma)
+
+    levels = payload.get("levels", [])
+    if max_levels is not None:
+        levels = levels[:max_levels]
+    if show_levels is not None:
+        levels = [x for x in levels if x.get("id") in show_levels]
+
+    # 递归线（笔/线段/中枢）
+    for level_idx, level in enumerate(levels):
+        level_id = _ensure_series_name(_safe_get(level, "id", f"L{level_idx}"))
+        level_label = _ensure_series_name(_safe_get(level, "label", level_id))
+        style = _level_palette(level_idx)
+
+        if show_bi:
+            bi_x: list[str] = []
+            bi_y: list[float] = []
+            for bi in _safe_get(level, "bi", []) or []:
+                sidx = _resolve_axis_index(
+                    dt_index=dt_index,
+                    dt_label_index=xaxis_labels,
+                    explicit_index=_safe_get(bi, "base_sidx"),
+                    dt_value=_safe_get(bi, "sdt"),
+                )
+                eidx = _resolve_axis_index(
+                    dt_index=dt_index,
+                    dt_label_index=xaxis_labels,
+                    explicit_index=_safe_get(bi, "base_eidx"),
+                    dt_value=_safe_get(bi, "edt"),
+                )
+                if sidx is None or eidx is None:
+                    continue
+                start = _to_float(_safe_get(bi, "start_price"))
+                end = _to_float(_safe_get(bi, "end_price"))
+                bi_x.extend([xaxis_labels[sidx], xaxis_labels[eidx]])
+                bi_y.extend([start, end])
+
+            if bi_x:
+                chart_bi = Line()
+                chart_bi.add_xaxis(xaxis_data=bi_x)
+                chart_bi.add_yaxis(
+                    series_name=f"{level_label}-L0笔".replace("L0", level_id),
+                    y_axis=bi_y,
+                    is_smooth=False,
+                    is_connect_nones=True,
+                    symbol="none",
+                    label_opts=label_not_show_opts,
+                    itemstyle_opts=opts.ItemStyleOpts(color=style["bi_color"]),
+                    linestyle_opts=opts.LineStyleOpts(width=style["bi_width"], color=style["bi_color"]),
+                )
+                chart_k = chart_k.overlap(chart_bi)
+
+        if show_xd:
+            for seg in _safe_get(level, "segments", []) or []:
+                sidx = _resolve_axis_index(
+                    dt_index=dt_index,
+                    dt_label_index=xaxis_labels,
+                    explicit_index=_safe_get(seg, "base_sidx"),
+                    dt_value=_safe_get(seg, "sdt"),
+                )
+                eidx = _resolve_axis_index(
+                    dt_index=dt_index,
+                    dt_label_index=xaxis_labels,
+                    explicit_index=_safe_get(seg, "base_eidx"),
+                    dt_value=_safe_get(seg, "edt"),
+                )
+                if sidx is None or eidx is None:
+                    continue
+                start = _to_float(_safe_get(seg, "start_price"))
+                end = _to_float(_safe_get(seg, "end_price"))
+                line = Line()
+                line.add_xaxis(xaxis_data=[xaxis_labels[sidx], xaxis_labels[eidx]])
+                line.add_yaxis(
+                    series_name=f"{level_label}-线段",
+                    y_axis=[start, end],
+                    is_smooth=False,
+                    symbol="none",
+                    label_opts=label_not_show_opts,
+                    itemstyle_opts=opts.ItemStyleOpts(color=style["xd_color"]),
+                    linestyle_opts=opts.LineStyleOpts(
+                        width=style["xd_width"], color=style["xd_color"], type_="solid", curveness=0.0
+                    ),
+                )
+                chart_k = chart_k.overlap(line)
+
+                if show_divergence and _safe_get(seg, "is_divergence_leg"):
+                    div = Line()
+                    div.add_xaxis(xaxis_data=[xaxis_labels[sidx], xaxis_labels[eidx]])
+                    div.add_yaxis(
+                        series_name=f"{level_label}-背驰线段",
+                        y_axis=[start, end],
+                        is_smooth=False,
+                        symbol="none",
+                        label_opts=label_not_show_opts,
+                        itemstyle_opts=opts.ItemStyleOpts(color=style["div_color"]),
+                        linestyle_opts=opts.LineStyleOpts(
+                            width=style["div_width"],
+                            color=style["div_color"],
+                            type_="dashed",
+                        ),
+                    )
+                    chart_k = chart_k.overlap(div)
+
+        if show_zones:
+            for zone in _safe_get(level, "zones", []) or []:
+                sidx = _resolve_axis_index(
+                    dt_index=dt_index,
+                    dt_label_index=xaxis_labels,
+                    explicit_index=_safe_get(zone, "base_sidx"),
+                    dt_value=_safe_get(zone, "sdt"),
+                )
+                eidx = _resolve_axis_index(
+                    dt_index=dt_index,
+                    dt_label_index=xaxis_labels,
+                    explicit_index=_safe_get(zone, "base_eidx"),
+                    dt_value=_safe_get(zone, "edt"),
+                )
+                if sidx is None or eidx is None:
+                    continue
+                zg = _to_float(_safe_get(zone, "zg"))
+                zd = _to_float(_safe_get(zone, "zd"))
+                zi = _safe_get(zone, "index")
+                zone_idx = f"{level_label}-中枢{zi if zi is not None else ''}"
+                zone_top = Line()
+                zone_top.add_xaxis(xaxis_data=[xaxis_labels[sidx], xaxis_labels[eidx]])
+                zone_top.add_yaxis(
+                    series_name=zone_idx + "-上沿",
+                    y_axis=[zg, zg],
+                    is_smooth=False,
+                    symbol="none",
+                    label_opts=label_not_show_opts,
+                    itemstyle_opts=opts.ItemStyleOpts(color=style["zone_border"]),
+                    linestyle_opts=opts.LineStyleOpts(color=style["zone_border"], width=1.2, type_="dashed"),
+                )
+                zone_bottom = Line()
+                zone_bottom.add_xaxis(xaxis_data=[xaxis_labels[sidx], xaxis_labels[eidx]])
+                zone_bottom.add_yaxis(
+                    series_name=zone_idx + "-下沿",
+                    y_axis=[zd, zd],
+                    is_smooth=False,
+                    symbol="none",
+                    label_opts=label_not_show_opts,
+                    itemstyle_opts=opts.ItemStyleOpts(color=style["zone_border"]),
+                    linestyle_opts=opts.LineStyleOpts(color=style["zone_border"], width=1.2, type_="dashed"),
+                )
+                chart_k = chart_k.overlap(zone_top)
+                chart_k = chart_k.overlap(zone_bottom)
+
+        if show_trend_types:
+            for trend_type in _safe_get(level, "trend_types", []) or []:
+                sidx = _resolve_axis_index(
+                    dt_index=dt_index,
+                    dt_label_index=xaxis_labels,
+                    explicit_index=_safe_get(trend_type, "base_sidx"),
+                    dt_value=_safe_get(trend_type, "sdt"),
+                )
+                eidx = _resolve_axis_index(
+                    dt_index=dt_index,
+                    dt_label_index=xaxis_labels,
+                    explicit_index=_safe_get(trend_type, "base_eidx"),
+                    dt_value=_safe_get(trend_type, "edt"),
+                )
+                if sidx is None or eidx is None or sidx >= len(rows) or eidx >= len(rows):
+                    continue
+
+                ttype = _ensure_series_name(_safe_get(trend_type, "type", "trend"))
+                if not ttype:
+                    continue
+
+                trend_color = "#0ec5ff" if ttype.startswith("上") else "#ff8f00"
+                line = Line()
+                line.add_xaxis(xaxis_data=[xaxis_labels[sidx], xaxis_labels[eidx]])
+                line.add_yaxis(
+                    series_name=f"{level_label}-走势-{ttype}",
+                    y_axis=[_to_float(rows[sidx]["close"]), _to_float(rows[eidx]["close"])],
+                    is_smooth=False,
+                    symbol="diamond",
+                    symbol_size=6,
+                    label_opts=label_not_show_opts,
+                    itemstyle_opts=opts.ItemStyleOpts(color=trend_color),
+                    linestyle_opts=opts.LineStyleOpts(
+                        width=1.0,
+                        type_="dashed",
+                        color=trend_color,
+                    ),
+                )
+                chart_k = chart_k.overlap(line)
+
+        if show_signals:
+            signals = _safe_get(level, "trade_signals", []) or []
+            signal_points: dict[str, tuple[list[str], list[list[Any]]]] = {}
+            for signal in signals:
+                sidx = _resolve_axis_index(
+                    dt_index=dt_index,
+                    dt_label_index=xaxis_labels,
+                    explicit_index=_safe_get(signal, "base_idx"),
+                    dt_value=_safe_get(signal, "dt"),
+                )
+                if sidx is None or sidx >= len(xaxis_labels):
+                    continue
+                s_type = _ensure_series_name(_safe_get(signal, "signal_type", "Signal"))
+                side = _ensure_series_name(_safe_get(signal, "side", ""))
+                name = f"{level_label}-{s_type}"
+                point = [xaxis_labels[sidx], _to_float(_safe_get(signal, "price")), f"{side}-{s_type} @ {level_id}"]
+                signal_points.setdefault(name, ([], []))
+                signal_points[name][0].append(point[0])
+                signal_points[name][1].append([point[1], point[2]])
+
+            for signal_name, (sx, sy) in signal_points.items():
+                if not sx:
+                    continue
+                s = Scatter()
+                s.add_xaxis(xaxis_data=sx)
+                s.add_yaxis(
+                    series_name=signal_name,
+                    y_axis=sy,
+                    symbol_size=12,
+                    symbol="circle",
+                    label_opts=label_not_show_opts,
+                    tooltip_opts=opts.TooltipOpts(
+                        textstyle_opts=opts.TextStyleOpts(font_size=12),
+                        formatter=JsCode("function (params) {return params.value[2];}"),
+                    ),
+                )
+                chart_k = chart_k.overlap(s)
+
+    # 共振信号
+    if show_resonance:
+        role_cfg = {
+            "gold_blink": {"name": "共振-金色闪烁", "color": "#FFC107"},
+            "magenta_blink": {"name": "共振-品红闪烁", "color": "#E91E63"},
+            "red_pulse": {"name": "共振-红色脉冲", "color": "#F44336"},
+        }
+        resonance_groups: dict[str, tuple[list[str], list[list[Any]]]] = {}
+        for sig in _safe_get(payload, "resonance_signals", []) or []:
+            role = _ensure_series_name(_safe_get(sig, "visual_role", "gold_blink"))
+            cfg = role_cfg.get(role, role_cfg["gold_blink"])
+            ridx = _resolve_axis_index(
+                dt_index=dt_index,
+                dt_label_index=xaxis_labels,
+                explicit_index=_safe_get(sig, "base_idx"),
+                dt_value=_safe_get(sig, "dt"),
+            )
+            if ridx is None or ridx >= len(xaxis_labels):
+                continue
+            sname = f"{cfg['name']}-{_ensure_series_name(_safe_get(sig,'name'))}"
+            info = (
+                f"{_ensure_series_name(_safe_get(sig, 'name'))}"
+                + f" 价格={_to_float(_safe_get(sig, 'price')):.4f}"
+                + (
+                    f" 级别={_ensure_series_name(_safe_get(sig, 'higher_level_id'))}->{_ensure_series_name(_safe_get(sig, 'lower_level_id'))}"
+                    if _safe_get(sig, "higher_level_id")
+                    else ""
+                )
+            )
+            resonance_groups.setdefault(sname, ([], []))
+            resonance_groups[sname][0].append(xaxis_labels[ridx])
+            resonance_groups[sname][1].append([_to_float(_safe_get(sig, "price")), info])
+
+        for sname, (rx, ry) in resonance_groups.items():
+            if not rx:
+                continue
+            e = EffectScatter()
+            color = role_cfg.get("gold_blink", {"color": "#FFC107"})["color"]
+            if sname.startswith(role_cfg["gold_blink"]["name"]):
+                color = role_cfg["gold_blink"]["color"]
+            elif sname.startswith(role_cfg["magenta_blink"]["name"]):
+                color = role_cfg["magenta_blink"]["color"]
+            elif sname.startswith(role_cfg["red_pulse"]["name"]):
+                color = role_cfg["red_pulse"]["color"]
+            e.add_xaxis(xaxis_data=rx)
+            e.add_yaxis(
+                series_name=sname,
+                y_axis=ry,
+                effect_opts=opts.EffectOpts(scale=7, period=5, color=color, brush_type="fill"),
+                symbol="pin",
+                symbol_size=16,
+                color=color,
+                tooltip_opts=opts.TooltipOpts(
+                    textstyle_opts=opts.TextStyleOpts(font_size=12),
+                    formatter=JsCode("function (params) {return params.value[2];}"),
+                ),
+            )
+            chart_k = chart_k.overlap(e)
+
+    # 成交量图
+    chart_vol = Bar()
+    chart_vol.add_xaxis(xaxis_labels)
+    chart_vol.add_yaxis(series_name="Volume", y_axis=vol, bar_width="60%")
+    chart_vol.set_global_opts(
+        xaxis_opts=opts.AxisOpts(
+            type_="category",
+            grid_index=1,
+            boundary_gap=False,
+            axislabel_opts=opts.LabelOpts(is_show=True, font_size=8, color="#9b9da9"),
+        ),
+        yaxis_opts=yaxis_opts,
+        legend_opts=legend_not_show_opts,
+    )
+
+    # MACD图
+    chart_macd = Bar()
+    chart_macd.add_xaxis(xaxis_labels)
+    chart_macd.add_yaxis(series_name="MACD", y_axis=macd_bar, bar_width="60%")
+    chart_macd.set_global_opts(
+        xaxis_opts=opts.AxisOpts(
+            type_="category",
+            grid_index=2,
+            axislabel_opts=opts.LabelOpts(is_show=False),
+            splitline_opts=opts.SplitLineOpts(is_show=False),
+        ),
+        yaxis_opts=opts.AxisOpts(
+            grid_index=2,
+            split_number=4,
+            axisline_opts=opts.AxisLineOpts(is_on_zero=False),
+            axistick_opts=opts.AxisTickOpts(is_show=False),
+            splitline_opts=opts.SplitLineOpts(is_show=False),
+            axislabel_opts=opts.LabelOpts(is_show=True, color="#c7c7c7"),
+        ),
+        legend_opts=opts.LegendOpts(is_show=False),
+    )
+    line = Line()
+    line.add_xaxis(xaxis_labels)
+    if hasattr(diff, "__iter__") and len(list(diff)) > 0 if hasattr(diff, "__iter__") else False:
+        line.add_yaxis(
+            series_name="DIFF",
+            y_axis=np.asarray(diff).tolist(),
+            label_opts=label_not_show_opts,
+            is_symbol_show=False,
+            linestyle_opts=opts.LineStyleOpts(opacity=0.8, width=1.0, color="#da6ee8"),
+        )
+        line.add_yaxis(
+            series_name="DEA",
+            y_axis=np.asarray(dea).tolist(),
+            label_opts=label_not_show_opts,
+            is_symbol_show=False,
+            linestyle_opts=opts.LineStyleOpts(opacity=0.8, width=1.0, color="#39afe6"),
+        )
     chart_macd = chart_macd.overlap(line)
 
     grid0_opts = opts.GridOpts(pos_left="0%", pos_right="1%", pos_top="12%", height="58%")

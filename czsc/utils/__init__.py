@@ -107,6 +107,7 @@ __all__ = [
     # 延迟加载属性
     "kline_pro",
     "trading_view_kline",
+    "kline_recursive",
     "generate_backtest_report",
     "generate_html_backtest_report",
     "generate_pdf_backtest_report",
@@ -369,6 +370,7 @@ _LAZY_SUBMODULES = {
 _LAZY_ATTRS = {
     # echarts_plot
     "kline_pro": ("czsc.utils.echarts_plot", "kline_pro"),
+    "kline_recursive": ("czsc.utils.echarts_plot", "kline_recursive"),
     "trading_view_kline": ("czsc.utils.echarts_plot", "trading_view_kline"),
     # backtest_report
     "generate_backtest_report": ("czsc.utils.backtest_report", "generate_backtest_report"),

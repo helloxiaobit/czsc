@@ -5,13 +5,52 @@ from __future__ import annotations
 from datetime import datetime
 from io import BytesIO
 from pathlib import Path
+import os
 import re
 import sys
 import tempfile
+import types
+from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
+
+
+def _install_rs_czsc_stub() -> None:
+    """当环境缺少 rs_czsc 时，用轻量桩保证前端可启动。"""
+    if "rs_czsc" in sys.modules:
+        return
+
+    try:
+        import rs_czsc
+        sys.modules["rs_czsc"] = rs_czsc
+        return
+    except ModuleNotFoundError:
+        os.environ["CZSC_USE_PYTHON"] = "1"
+        pass
+
+    msg = (
+        "缺少 rs_czsc 运行依赖：请在环境中执行 `pip install rs_czsc`。\n"
+        "当前前端会退化到可运行模式，仅用于界面可视化演示。"
+    )
+
+    def _missing_callable(*_: Any, **__: Any) -> None:
+        raise ModuleNotFoundError(msg)
+
+    class _MissingWeightBacktest:
+        def __init__(self, *_: Any, **__: Any) -> None:
+            raise ModuleNotFoundError(msg)
+
+    stub = types.ModuleType("rs_czsc")
+    stub.__version__ = "0.0.0"
+    stub.WeightBacktest = _MissingWeightBacktest
+    stub.daily_performance = _missing_callable
+    stub.top_drawdowns = _missing_callable
+    sys.modules["rs_czsc"] = stub
+
+
+_install_rs_czsc_stub()
 
 import numpy as np
 import pandas as pd
