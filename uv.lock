@@ -926,6 +926,7 @@ wheels = [
 
 [[package]]
 name = "czsc"
+version = "0.10.12"
 source = { editable = "." }
 dependencies = [
     { name = "clickhouse-connect" },

@@ -3,12 +3,49 @@ author: zengbin93
 email: zeng_bin8888@163.com
 create_dt: 2019/10/29 15:01
 """
+from __future__ import annotations
 
-from rs_czsc import (
-    WeightBacktest,
-    daily_performance,
-    top_drawdowns,
-)
+import os
+import sys
+import types
+
+
+class _RsCzscMissing(RuntimeError):
+    pass
+
+
+def _missing_rs_czsc(*_: object, **__: object) -> None:
+    raise _RsCzscMissing(
+        "当前环境未安装 rs_czsc，已启用降级模式。部分功能（如回测）将不可用，如需完整体验请安装 rs-czsc。"
+    )
+
+
+def _missing_weight_backtest(*_: object, **__: object) -> None:
+    _missing_rs_czsc()
+
+
+def _install_rs_czsc_stub() -> None:
+    if "rs_czsc" in sys.modules:
+        return
+    stub = types.ModuleType("rs_czsc")
+    stub.__version__ = "0.0.0"
+    stub.WeightBacktest = _missing_weight_backtest
+    stub.daily_performance = _missing_rs_czsc
+    stub.top_drawdowns = _missing_rs_czsc
+    sys.modules["rs_czsc"] = stub
+
+
+def _load_rs_czsc():
+    try:
+        from rs_czsc import WeightBacktest, daily_performance, top_drawdowns
+    except ModuleNotFoundError as exc:
+        _install_rs_czsc_stub()
+        os.environ["CZSC_USE_PYTHON"] = "1"
+        return _missing_weight_backtest, _missing_rs_czsc, _missing_rs_czsc
+    return WeightBacktest, daily_performance, top_drawdowns
+
+
+WeightBacktest, daily_performance, top_drawdowns = _load_rs_czsc()
 
 from czsc import envs, traders, utils
 from czsc.core import CZSC, ZS, Direction, Event, Freq, NewBar, Operate, Position, RawBar, Signal, format_standard_kline

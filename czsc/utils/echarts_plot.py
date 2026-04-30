@@ -840,7 +840,7 @@ def kline_recursive(
                     label_opts=label_not_show_opts,
                     itemstyle_opts=opts.ItemStyleOpts(color=style["xd_color"]),
                     linestyle_opts=opts.LineStyleOpts(
-                        width=style["xd_width"], color=style["xd_color"], type_="solid", curveness=0.0
+                        width=style["xd_width"], color=style["xd_color"], type_="solid"
                     ),
                 )
                 chart_k = chart_k.overlap(line)
