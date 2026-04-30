@@ -72,6 +72,11 @@ pip install git+https://github.com/waditu/czsc.git@V0.9.46 -U
 pip install czsc -U -i https://pypi.python.org/simple
 ```
 
+递归多级别前端（示例）可一键启动（Windows）：
+```
+run_recursive_frontend.bat
+```
+
 ## 使用案例
 
 1. [使用 tqsdk 进行期货交易](https://s0cqcxuy3p.feishu.cn/wiki/wikcn41lQIAJ1f8v41Dj5eAmrub)
