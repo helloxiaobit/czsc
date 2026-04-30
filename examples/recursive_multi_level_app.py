@@ -138,6 +138,7 @@ def main() -> None:
         uploaded = st.file_uploader("上传 CSV 文件（dt,open,high,low,close,vol,amount）", type=["csv"])
         template_csv = _csv_template()
         sample_csv = _sample_csv(symbol=symbol, freq=freq)
+        use_sample = st.button("直接加载样例 CSV（不上传）", help="使用内置样例数据快速启动示例")
 
         st.caption("CSV 导入说明：字段必须包含 dt/open/close/high/low，vol 与 amount 为可选字段。")
         col_template, col_sample = st.columns(2)
@@ -154,10 +155,13 @@ def main() -> None:
             mime="text/csv",
         )
 
-        if uploaded is None:
+        if uploaded is not None:
+            source_df = pd.read_csv(BytesIO(uploaded.getvalue()))
+        elif use_sample:
+            source_df = pd.read_csv(BytesIO(sample_csv.encode("utf-8")))
+        else:
             st.info("请上传 CSV 后继续")
             return
-        source_df = pd.read_csv(BytesIO(uploaded.getvalue()))
 
     if source_df.empty:
         st.warning("输入数据为空")
