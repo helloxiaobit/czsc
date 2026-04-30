@@ -154,6 +154,10 @@ def main() -> None:
             seed = 17
 
         st.divider()
+        st.subheader("CSV 参数")
+        max_csv_rows = st.slider("CSV 最大读取行数（避免超时）", 1000, 20000, 8000, 1000)
+
+        st.divider()
         st.subheader("递归参数")
         max_levels = st.slider("显示层级数量", 1, 6, 3)
         min_signals = st.number_input("每层最低信号条数（0表示不裁剪）", min_value=0, max_value=10, value=0, step=1)
@@ -174,12 +178,12 @@ def main() -> None:
     if data_mode.startswith("mock"):
         source_df = _build_mock_kline(symbol=symbol, freq=freq, bars=bars, seed=seed)
     else:
-        uploaded = st.file_uploader("上传 CSV 文件（dt,open,high,low,close,vol,amount）", type=["csv"])
+        uploaded = st.file_uploader("上传 CSV 文件（dt,open,high,low,close，vol/volume/amount 可选）", type=["csv"])
         template_csv = _csv_template()
         sample_csv = _sample_csv(symbol=symbol, freq=freq)
         use_sample = st.button("直接加载样例 CSV（不上传）", help="使用内置样例数据快速启动示例")
 
-        st.caption("CSV 导入说明：字段必须包含 dt/open/close/high/low，vol 与 amount 为可选字段。")
+        st.caption("CSV 导入说明：字段必须包含 dt/open/close/high/low，vol 或 volume 或 amount 为可选字段。")
         col_template, col_sample = st.columns(2)
         col_template.download_button(
             "下载 CSV 模板",
@@ -195,11 +199,24 @@ def main() -> None:
         )
 
         if uploaded is not None:
-            source_df = pd.read_csv(BytesIO(uploaded.getvalue()))
+            if uploaded.size and uploaded.size > 20 * 1024 * 1024:
+                st.warning("CSV 文件较大，已自动按前 N 行读取，避免前端超时（可在侧边栏调大）")
+            try:
+                source_df = pd.read_csv(BytesIO(uploaded.getvalue()), nrows=max_csv_rows)
+            except Exception as exc:
+                st.error(f"CSV 解析失败: {exc}")
+                return
         elif use_sample:
             source_df = pd.read_csv(BytesIO(sample_csv.encode("utf-8")))
         else:
             st.info("请上传 CSV 后继续")
+            return
+
+        st.success(f"已加载 CSV: {len(source_df)} 行")
+        st.caption(f"列名: {', '.join(source_df.columns.tolist())}")
+
+        if source_df.empty:
+            st.warning("CSV 中没有可用行")
             return
 
     if source_df.empty:
